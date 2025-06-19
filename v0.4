@@ -1,0 +1,852 @@
+//@version=6
+indicator("Table Logic Extractor", shorttitle="TLE", overlay=true)
+
+// ============================================================================
+// INPUT PARAMETRY
+// ============================================================================
+
+// Parametry indikátorů
+ema_fast = input.int(9, "Rychlá EMA", minval=1, group="EMA")
+ema_slow = input.int(21, "Pomalá EMA", minval=1, group="EMA")
+ema_trend = input.int(50, "Trend EMA", minval=1, group="EMA")
+
+rsi_length = input.int(14, "RSI délka", minval=1, group="RSI")
+rsi_overbought = input.int(70, "RSI překoupeno", minval=50, maxval=100, group="RSI")
+rsi_oversold = input.int(30, "RSI přeprodáno", minval=0, maxval=50, group="RSI")
+
+macd_fast = input.int(12, "MACD rychlá", minval=1, group="MACD")
+macd_slow = input.int(26, "MACD pomalá", minval=1, group="MACD")
+macd_signal = input.int(9, "MACD signál", minval=1, group="MACD")
+
+bb_length = input.int(20, "Bollinger Bands délka", minval=1, group="Bollinger Bands")
+bb_mult = input.float(2.0, "Bollinger Bands násobek", minval=0.1, maxval=5.0, step=0.1, group="Bollinger Bands")
+
+atr_length = input.int(14, "ATR délka", minval=1, group="ATR")
+volume_threshold = input.float(1.5, "Volume threshold", minval=0.1, step=0.1, group="Volume")
+
+// Parametry divergence
+div_lookback = input.int(3, "Periody pro divergenci", minval=2, maxval=10, group="Divergence")
+div_threshold = input.float(0.5, "Práh síly divergence", minval=0.1, maxval=1.0, step=0.1, group="Divergence")
+
+// ============================================================================
+// VÝPOČTY INDIKÁTORŮ
+// ============================================================================
+
+// EMA
+ema_fast_val = ta.ema(close, ema_fast)
+ema_slow_val = ta.ema(close, ema_slow)
+ema_trend_val = ta.ema(close, ema_trend)
+
+// RSI
+rsi_val = ta.rsi(close, rsi_length)
+
+// MACD
+[macd_line, macd_signal_line, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal)
+
+// Bollinger Bands
+[bb_upper, bb_middle, bb_lower] = ta.bb(close, bb_length, bb_mult)
+
+// Volume
+volume_avg = ta.sma(volume, 20)
+volume_high = volume > volume_avg * volume_threshold
+
+// ATR
+atr_val = ta.atr(atr_length)
+atr_sma = ta.sma(atr_val, 20)
+atr_ratio = atr_val / atr_sma
+
+// ============================================================================
+// DETEKCE DIVERGENCÍ
+// ============================================================================
+
+get_divergence() =>
+    bull_div = low[2] < low[3] and rsi_val[2] > rsi_val[3] and low[1] > low[2]
+    bear_div = high[2] > high[3] and rsi_val[2] < rsi_val[3] and high[1] < high[2]
+    [bull_div, bear_div]
+
+[bull_div, bear_div] = get_divergence()
+
+// Výpočet síly divergence
+bull_div_strength = bull_div ? math.min(100, math.abs(rsi_val[2] - rsi_val[3]) / math.abs(low[2] - low[3]) * 50) : 0.0
+bear_div_strength = bear_div ? math.min(100, math.abs(rsi_val[2] - rsi_val[3]) / math.abs(high[2] - high[3]) * 50) : 0.0
+
+// ============================================================================
+// ANALÝZA TRENDU
+// ============================================================================
+
+// 1. EMA Trend Analysis
+ema_bullish = ema_fast_val > ema_slow_val and ema_slow_val > ema_trend_val
+ema_bearish = ema_fast_val < ema_slow_val and ema_slow_val < ema_trend_val
+ema_neutral = not (ema_bullish or ema_bearish)
+
+// 2. Price Action Analysis
+higher_high = high > high[1]
+higher_low = low > low[1]
+lower_high = high < high[1]
+lower_low = low < low[1]
+
+// 3. Momentum Analysis
+rsi_bullish = rsi_val > 50 and rsi_val < rsi_overbought
+rsi_bearish = rsi_val < 50 and rsi_val > rsi_oversold
+macd_bullish = macd_line > macd_signal_line and macd_histogram > 0
+macd_bearish = macd_line < macd_signal_line and macd_histogram < 0
+
+// 4. Bollinger Bands Analysis
+bb_bullish = close > bb_middle and close < bb_upper
+bb_bearish = close < bb_middle and close > bb_lower
+bb_extreme_bull = close > bb_upper
+bb_extreme_bear = close < bb_lower
+
+// 5. Volume Confirmation
+volume_confirmed = volume_high
+
+// ============================================================================
+// MOMENTUM CALCULATION - NOVÉ VÝPOČTY
+// ============================================================================
+
+// Momentum strength calculation
+momentum_strength = math.abs(close - close[5]) / atr_val
+momentum_direction = close > close[5] ? 1 : -1
+
+// ============================================================================
+// KOMPLEXNÍ TREND SIGNALY S VÁHOVÁNÍM
+// ============================================================================
+
+// Definice vah pro podmínky
+ema_weight = 2.0
+rsi_weight = 1.5
+macd_weight = 1.5
+bb_weight = 1.0
+volume_weight = 1.0
+higher_high_weight = 0.5
+higher_low_weight = 0.5
+
+// Maximální možný skóre
+max_possible_score = ema_weight + rsi_weight + macd_weight + bb_weight + volume_weight + higher_high_weight + higher_low_weight
+
+// Bullish Trend Score s váhováním
+bullish_score = 0.0
+bullish_score := bullish_score + (ema_bullish ? ema_weight : 0)
+bullish_score := bullish_score + (rsi_bullish ? rsi_weight : 0)
+bullish_score := bullish_score + (macd_bullish ? macd_weight : 0)
+bullish_score := bullish_score + (bb_bullish ? bb_weight : 0)
+bullish_score := bullish_score + (volume_confirmed ? volume_weight : 0)
+bullish_score := bullish_score + (higher_high ? higher_high_weight : 0)
+bullish_score := bullish_score + (higher_low ? higher_low_weight : 0)
+
+// Bearish Trend Score s váhováním
+bearish_score = 0.0
+bearish_score := bearish_score + (ema_bearish ? ema_weight : 0)
+bearish_score := bearish_score + (rsi_bearish ? rsi_weight : 0)
+bearish_score := bearish_score + (macd_bearish ? macd_weight : 0)
+bearish_score := bearish_score + (bb_bearish ? bb_weight : 0)
+bearish_score := bearish_score + (volume_confirmed ? volume_weight : 0)
+bearish_score := bearish_score + (lower_high ? higher_high_weight : 0)
+bearish_score := bearish_score + (lower_low ? higher_low_weight : 0)
+
+// Procentuální vyjádření trendu
+trend_strength_percent = 0
+trend_direction_percent = 0
+
+if bullish_score > bearish_score
+    trend_strength_percent := math.round((bullish_score / max_possible_score) * 100)
+    trend_direction_percent := trend_strength_percent
+else if bearish_score > bullish_score
+    trend_strength_percent := math.round((bearish_score / max_possible_score) * 100)
+    trend_direction_percent := -trend_strength_percent
+else
+    trend_strength_percent := 0
+    trend_direction_percent := 0
+
+// ============================================================================
+// FUNKCE PRO VÝPOČET TRENDU Z TIMEFRAME
+// ============================================================================
+
+get_trend_from_timeframe(tf) =>
+    // Získání dat z daného timeframe
+    tf_close = request.security(syminfo.tickerid, tf, close)
+    tf_high = request.security(syminfo.tickerid, tf, high)
+    tf_low = request.security(syminfo.tickerid, tf, low)
+    tf_volume = request.security(syminfo.tickerid, tf, volume)
+    
+    // Výpočet základních indikátorů pro daný timeframe
+    tf_ema_fast = request.security(syminfo.tickerid, tf, ta.ema(close, ema_fast))
+    tf_ema_slow = request.security(syminfo.tickerid, tf, ta.ema(close, ema_slow))
+    tf_ema_trend = request.security(syminfo.tickerid, tf, ta.ema(close, ema_trend))
+    tf_rsi = request.security(syminfo.tickerid, tf, ta.rsi(close, rsi_length))
+    tf_volume_avg = request.security(syminfo.tickerid, tf, ta.sma(volume, 20))
+    
+    // Analýza trendu pro daný timeframe
+    tf_ema_bullish = tf_ema_fast > tf_ema_slow and tf_ema_slow > tf_ema_trend
+    tf_ema_bearish = tf_ema_fast < tf_ema_slow and tf_ema_slow < tf_ema_trend
+    tf_higher_high = tf_high > tf_high[1]
+    tf_higher_low = tf_low > tf_low[1]
+    tf_lower_high = tf_high < tf_high[1]
+    tf_lower_low = tf_low < tf_low[1]
+    tf_rsi_bullish = tf_rsi > 50 and tf_rsi < rsi_overbought
+    tf_rsi_bearish = tf_rsi < 50 and tf_rsi > rsi_oversold
+    tf_volume_confirmed = tf_volume > tf_volume_avg * volume_threshold
+    
+    // Počítání podmínek
+    tf_bullish_conditions = 0
+    tf_bullish_conditions := tf_bullish_conditions + (tf_ema_bullish ? 1 : 0)
+    tf_bullish_conditions := tf_bullish_conditions + (tf_higher_high ? 1 : 0)
+    tf_bullish_conditions := tf_bullish_conditions + (tf_higher_low ? 1 : 0)
+    tf_bullish_conditions := tf_bullish_conditions + (tf_rsi_bullish ? 1 : 0)
+    tf_bullish_conditions := tf_bullish_conditions + (tf_volume_confirmed ? 1 : 0)
+    
+    tf_bearish_conditions = 0
+    tf_bearish_conditions := tf_bearish_conditions + (tf_ema_bearish ? 1 : 0)
+    tf_bearish_conditions := tf_bearish_conditions + (tf_lower_high ? 1 : 0)
+    tf_bearish_conditions := tf_bearish_conditions + (tf_lower_low ? 1 : 0)
+    tf_bearish_conditions := tf_bearish_conditions + (tf_rsi_bearish ? 1 : 0)
+    tf_bearish_conditions := tf_bearish_conditions + (tf_volume_confirmed ? 1 : 0)
+    
+    // Výpočet trendu - DARK MODE barvy
+    tf_trend = ""
+    tf_color = color.new(color.gray, 95)
+    tf_emoji = "•"
+    tf_text_color = color.white
+    
+    if tf_bullish_conditions > tf_bearish_conditions and tf_bullish_conditions >= 3
+        tf_trend := "BUY"
+        tf_color := color.new(color.green, 90)
+        tf_emoji := "▲"
+        tf_text_color := color.lime
+    else if tf_bearish_conditions > tf_bullish_conditions and tf_bearish_conditions >= 3
+        tf_trend := "SELL"
+        tf_color := color.new(color.red, 90)
+        tf_emoji := "▼"
+        tf_text_color := color.red
+    else
+        tf_trend := "NEUTRAL"
+        tf_color := color.new(color.gray, 95)
+        tf_emoji := "•"
+        tf_text_color := color.white
+    
+    [tf_trend, tf_color, tf_emoji, tf_text_color]
+
+// ============================================================================
+// VÝPOČET TRENDŮ Z TIMEFRAMŮ
+// ============================================================================
+
+// M5 Trend
+[m5_trend, m5_color, m5_emoji, m5_text_color] = get_trend_from_timeframe("5")
+
+// M15 Trend
+[m15_trend, m15_color, m15_emoji, m15_text_color] = get_trend_from_timeframe("15")
+
+// M30 Trend
+[m30_trend, m30_color, m30_emoji, m30_text_color] = get_trend_from_timeframe("30")
+
+// ============================================================================
+// VÝPOČET SOUHRNNÝCH SIGNÁLŮ
+// ============================================================================
+
+buy_signals = 0
+sell_signals = 0
+
+if rsi_val > 50 and rsi_val < 70
+    buy_signals := buy_signals + 1
+else if rsi_val < 50 and rsi_val > 30
+    sell_signals := sell_signals + 1
+
+if macd_bullish
+    buy_signals := buy_signals + 1
+else if macd_bearish
+    sell_signals := sell_signals + 1
+
+if ema_bullish
+    buy_signals := buy_signals + 1
+else if ema_bearish
+    sell_signals := sell_signals + 1
+
+if bb_bullish or bb_extreme_bear
+    buy_signals := buy_signals + 1
+else if bb_bearish or bb_extreme_bull
+    sell_signals := sell_signals + 1
+
+if bull_div and bull_div_strength > div_threshold * 100
+    buy_signals := buy_signals + 1
+else if bear_div and bear_div_strength > div_threshold * 100
+    sell_signals := sell_signals + 1
+
+// Summary signal
+summary_signal = ""
+summary_color = color.red
+summary_bgcolor = color.new(color.gray, 95)
+
+if buy_signals > sell_signals and buy_signals >= 3
+    summary_signal := "STRONG BUY"
+    summary_color := color.lime
+    summary_bgcolor := color.new(color.green, 70)
+else if buy_signals > sell_signals
+    summary_signal := "BUY"
+    summary_color := color.lime
+    summary_bgcolor := color.new(color.green, 90)
+else if sell_signals > buy_signals and sell_signals >= 3
+    summary_signal := "STRONG SELL"
+    summary_color := color.red
+    summary_bgcolor := color.new(color.red, 70)
+else if sell_signals > buy_signals
+    summary_signal := "SELL"
+    summary_color := color.red
+    summary_bgcolor := color.new(color.red, 90)
+else
+    summary_signal := "NEUTRAL"
+    summary_color := color.white
+    summary_bgcolor := color.new(color.gray, 95)
+
+// ============================================================================
+// VÝPOČET TREND TEXTŮ
+// ============================================================================
+
+current_trend = ""
+current_trend_color = color.new(color.gray, 95)
+current_trend_emoji = "•"
+current_trend_text_color = color.red
+
+if bullish_score > bearish_score
+    current_trend := "BUY"
+    current_trend_color := color.new(color.green, 90)
+    current_trend_emoji := "▲"
+    current_trend_text_color := color.lime
+else if bearish_score > bullish_score
+    current_trend := "SELL"
+    current_trend_color := color.new(color.red, 90)
+    current_trend_emoji := "▼"
+    current_trend_text_color := color.red
+else
+    current_trend := "NEUTRAL"
+    current_trend_color := color.new(color.gray, 95)
+    current_trend_emoji := "•"
+    current_trend_text_color := color.white
+
+// ============================================================================
+// VÝPOČET TREND STRENGTH
+// ============================================================================
+
+strength_text = ""
+strength_color = color.white
+strength_bgcolor = color.new(color.gray, 95)
+strength_emoji = "•"
+
+if trend_direction_percent > 0
+    strength_text := "BUY " + str.tostring(trend_strength_percent) + "%"
+    if trend_strength_percent >= 80
+        strength_color := color.lime
+        strength_bgcolor := color.new(color.green, 70)
+        strength_emoji := "▲▲"
+    else if trend_strength_percent >= 60
+        strength_color := color.lime
+        strength_bgcolor := color.new(color.green, 90)
+        strength_emoji := "▲"
+    else if trend_strength_percent >= 40
+        strength_color := color.yellow
+        strength_bgcolor := color.new(color.yellow, 90)
+        strength_emoji := "↗"
+    else if trend_strength_percent >= 20
+        strength_color := color.orange
+        strength_bgcolor := color.new(color.orange, 90)
+        strength_emoji := "→"
+    else
+        strength_color := color.white
+        strength_bgcolor := color.new(color.gray, 95)
+        strength_emoji := "•"
+else if trend_direction_percent < 0
+    strength_text := "SELL " + str.tostring(trend_strength_percent) + "%"
+    if trend_strength_percent >= 80
+        strength_color := color.red
+        strength_bgcolor := color.new(color.red, 70)
+        strength_emoji := "▼▼"
+    else if trend_strength_percent >= 60
+        strength_color := color.red
+        strength_bgcolor := color.new(color.red, 90)
+        strength_emoji := "▼"
+    else if trend_strength_percent >= 40
+        strength_color := color.yellow
+        strength_bgcolor := color.new(color.yellow, 90)
+        strength_emoji := "↘"
+    else if trend_strength_percent >= 20
+        strength_color := color.orange
+        strength_bgcolor := color.new(color.orange, 90)
+        strength_emoji := "→"
+    else
+        strength_color := color.white
+        strength_bgcolor := color.new(color.gray, 95)
+        strength_emoji := "•"
+else
+    strength_text := "NEUTRAL 0%"
+    strength_color := color.white
+    strength_bgcolor := color.new(color.gray, 95)
+    strength_emoji := "•"
+
+// ============================================================================
+// ENTRY TIMING SIGNALS - NOVÉ VÝPOČTY
+// ============================================================================
+
+// Distance to Support/Resistance
+get_support_resistance_distance() =>
+    highest_high = ta.highest(high, 20)
+    lowest_low = ta.lowest(low, 20)
+    
+    // Support levels
+    support_1 = lowest_low + (highest_high - lowest_low) * 0.236
+    support_2 = lowest_low + (highest_high - lowest_low) * 0.382
+    support_3 = lowest_low + (highest_high - lowest_low) * 0.5
+    
+    // Resistance levels
+    resistance_1 = highest_high - (highest_high - lowest_low) * 0.236
+    resistance_2 = highest_high - (highest_high - lowest_low) * 0.382
+    resistance_3 = highest_high - (highest_high - lowest_low) * 0.5
+    
+    // Distance to nearest support
+    distance_to_support = math.min(math.abs(close - support_1), math.abs(close - support_2), math.abs(close - support_3))
+    
+    // Distance to nearest resistance
+    distance_to_resistance = math.min(math.abs(close - resistance_1), math.abs(close - resistance_2), math.abs(close - resistance_3))
+    
+    [distance_to_support, distance_to_resistance]
+
+[distance_to_support, distance_to_resistance] = get_support_resistance_distance()
+
+// Trend confirmation bars
+trend_confirmation_bars = 3
+bullish_confirmed = ta.barssince(close < close[1]) >= trend_confirmation_bars
+bearish_confirmed = ta.barssince(close > close[1]) >= trend_confirmation_bars
+
+// Entry signal logic
+entry_signal = ""
+entry_color = color.white
+entry_bgcolor = color.new(color.gray, 95)
+
+// BUY ENTRY conditions - OPRAVENO
+buy_entry_conditions = bullish_score > bearish_score and m30_trend == "BUY" and rsi_val > 30 and rsi_val < 70 and close > ema_fast_val and volume_high and distance_to_support < atr_val * 1.5 and bullish_confirmed
+
+// SELL ENTRY conditions - OPRAVENO
+sell_entry_conditions = bearish_score > bullish_score and m30_trend == "SELL" and rsi_val > 30 and rsi_val < 70 and close < ema_fast_val and volume_high and distance_to_resistance < atr_val * 1.5 and bearish_confirmed
+
+// Entry signal assignment
+if buy_entry_conditions
+    entry_signal := "BUY ENTRY"
+    entry_color := color.white
+    entry_bgcolor := color.new(color.green, 70)
+else if sell_entry_conditions
+    entry_signal := "SELL ENTRY"
+    entry_color := color.white
+    entry_bgcolor := color.new(color.red, 70)
+else
+    entry_signal := "WAIT"
+    entry_color := color.white
+    entry_bgcolor := color.new(color.gray, 95)
+
+// ============================================================================
+// SUPPORT/RESISTANCE DISTANCE + STOP LOSS/TP - NOVÉ VÝPOČTY
+// ============================================================================
+
+// Support/Resistance Distance calculation
+get_sr_distance_info() =>
+    highest_high = ta.highest(high, 20)
+    lowest_low = ta.lowest(low, 20)
+    price_range = highest_high - lowest_low
+    
+    // Support levels
+    support_1 = lowest_low + price_range * 0.236
+    support_2 = lowest_low + price_range * 0.382
+    support_3 = lowest_low + price_range * 0.5
+    
+    // Resistance levels
+    resistance_1 = highest_high - price_range * 0.236
+    resistance_2 = highest_high - price_range * 0.382
+    resistance_3 = highest_high - price_range * 0.5
+    
+    // Distance to nearest support
+    distance_to_support_new = math.min(math.abs(close - support_1), math.abs(close - support_2), math.abs(close - support_3))
+    
+    // Distance to nearest resistance
+    distance_to_resistance_new = math.min(math.abs(close - resistance_1), math.abs(close - resistance_2), math.abs(close - resistance_3))
+    
+    // Initialize variables
+    distance_atr = 0.0
+    sr_status = ""
+    sr_color = color.white
+    sr_bgcolor = color.new(color.gray, 95)
+    
+    // Determine which is closer and categorize
+    if distance_to_support_new < distance_to_resistance_new
+        distance_atr := distance_to_support_new / atr_val
+        if distance_atr < 0.5
+            sr_status := "VERY NEAR SUPPORT"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.red, 70)
+        else if distance_atr < 1.0
+            sr_status := "NEAR SUPPORT"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.orange, 70)
+        else if distance_atr < 2.0
+            sr_status := "MEDIUM DISTANCE"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.yellow, 70)
+        else
+            sr_status := "FAR FROM SUPPORT"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.green, 70)
+    else
+        distance_atr := distance_to_resistance_new / atr_val
+        if distance_atr < 0.5
+            sr_status := "VERY NEAR RESISTANCE"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.red, 70)
+        else if distance_atr < 1.0
+            sr_status := "NEAR RESISTANCE"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.orange, 70)
+        else if distance_atr < 2.0
+            sr_status := "MEDIUM DISTANCE"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.yellow, 70)
+        else
+            sr_status := "FAR FROM RESISTANCE"
+            sr_color := color.white
+            sr_bgcolor := color.new(color.green, 70)
+    
+    [distance_atr, sr_status, sr_color, sr_bgcolor]
+
+[distance_atr, sr_status, sr_color, sr_bgcolor] = get_sr_distance_info()
+
+// Stop Loss and Take Profit calculations
+stop_loss_distance = atr_val * 2
+
+// BUY scenario
+stop_loss_buy = close - stop_loss_distance
+tp1_buy = close + (stop_loss_distance * 1.5)
+tp2_buy = close + (stop_loss_distance * 2.5)
+
+// SELL scenario
+stop_loss_sell = close + stop_loss_distance
+tp1_sell = close - (stop_loss_distance * 1.5)
+tp2_sell = close - (stop_loss_distance * 2.5)
+
+// Determine which values to show based on trend
+sl_value = 0.0
+tp1_value = 0.0
+tp2_value = 0.0
+
+if bullish_score > bearish_score
+    sl_value := stop_loss_buy
+    tp1_value := tp1_buy
+    tp2_value := tp2_buy
+else
+    sl_value := stop_loss_sell
+    tp1_value := tp1_sell
+    tp2_value := tp2_sell
+
+// ============================================================================
+// TRADING STYLE DETECTION + TRADE SIGNAL - NOVÉ VÝPOČTY
+// ============================================================================
+
+// Trading Style Detection
+get_trading_style() =>
+    // TREND TRADING CONDITIONS
+    trend_conditions = bullish_score > 70 or bearish_score > 70
+    strong_trend = trend_strength_percent > 60
+    trend_aligned = m30_trend == current_trend
+    
+    // RANGE TRADING CONDITIONS
+    low_volatility = atr_ratio < 0.8
+    sideways_movement = math.abs(close - close[10]) < atr_val
+    rsi_range = rsi_val > 40 and rsi_val < 60
+    
+    // BREAKOUT TRADING CONDITIONS
+    high_volume = volume_high
+    price_near_level = distance_atr < 1.0
+    momentum_increasing = momentum_strength > 1.2
+    
+    // SCALPING CONDITIONS
+    high_volatility = atr_ratio > 1.5
+    quick_moves = math.abs(close - close[3]) > atr_val * 0.5
+    fast_momentum = momentum_strength > 1.5
+    
+    // Initialize variables
+    style = ""
+    style_color = color.white
+    style_bgcolor = color.new(color.gray, 95)
+    
+    // DETERMINE STYLE
+    if trend_conditions and strong_trend and trend_aligned
+        style := "TREND TRADING"
+        style_color := color.white
+        style_bgcolor := color.new(color.green, 70)
+    else if low_volatility and sideways_movement and rsi_range
+        style := "RANGE TRADING"
+        style_color := color.white
+        style_bgcolor := color.new(color.yellow, 70)
+    else if high_volume and price_near_level and momentum_increasing
+        style := "BREAKOUT TRADING"
+        style_color := color.white
+        style_bgcolor := color.new(color.orange, 70)
+    else if high_volatility and quick_moves and fast_momentum
+        style := "SCALPING"
+        style_color := color.white
+        style_bgcolor := color.new(color.red, 70)
+    else
+        style := "NO CLEAR STYLE"
+        style_color := color.white
+        style_bgcolor := color.new(color.gray, 95)
+    
+    [style, style_color, style_bgcolor]
+
+[style, style_color, style_bgcolor] = get_trading_style()
+
+// Intelligent Trade Signal with Style
+get_trade_signal_with_style() =>
+    // BASE SCORE CALCULATION
+    base_score = 0
+    trade_signal = ""
+    confidence = ""
+    signal_color = color.white
+    signal_bgcolor = color.new(color.gray, 95)
+    
+    // TREND TRADING SCORING
+    if style == "TREND TRADING"
+        if bullish_score > bearish_score and entry_signal == "BUY ENTRY"
+            base_score := 85
+            trade_signal := "TREND BUY"
+        else if bearish_score > bullish_score and entry_signal == "SELL ENTRY"
+            base_score := 85
+            trade_signal := "TREND SELL"
+        else
+            base_score := 30
+            trade_signal := "WAIT FOR TREND"
+    
+    // RANGE TRADING SCORING
+    else if style == "RANGE TRADING"
+        if rsi_val < 40 and close > ema_fast_val
+            base_score := 75
+            trade_signal := "RANGE BUY"
+        else if rsi_val > 60 and close < ema_fast_val
+            base_score := 75
+            trade_signal := "RANGE SELL"
+        else
+            base_score := 40
+            trade_signal := "RANGE WAIT"
+    
+    // BREAKOUT TRADING SCORING
+    else if style == "BREAKOUT TRADING"
+        if volume_high and close > high[1]
+            base_score := 80
+            trade_signal := "BREAKOUT BUY"
+        else if volume_high and close < low[1]
+            base_score := 80
+            trade_signal := "BREAKOUT SELL"
+        else
+            base_score := 35
+            trade_signal := "WAIT FOR BREAKOUT"
+    
+    // SCALPING SCORING
+    else if style == "SCALPING"
+        if momentum_strength > 1.5 and volume_high
+            base_score := 70
+            trade_signal := "SCALP BUY"
+        else if momentum_strength < -1.5 and volume_high
+            base_score := 70
+            trade_signal := "SCALP SELL"
+        else
+            base_score := 25
+            trade_signal := "NO SCALP"
+    
+    // NO CLEAR STYLE
+    else
+        base_score := 10
+        trade_signal := "NO TRADE"
+    
+    // CONFIDENCE LEVEL
+    if base_score >= 80
+        confidence := "HIGH"
+        signal_color := color.white
+        signal_bgcolor := color.new(color.green, 50)
+    else if base_score >= 60
+        confidence := "MEDIUM"
+        signal_color := color.white
+        signal_bgcolor := color.new(color.green, 70)
+    else if base_score >= 40
+        confidence := "LOW"
+        signal_color := color.white
+        signal_bgcolor := color.new(color.yellow, 70)
+    else
+        confidence := "NONE"
+        signal_color := color.white
+        signal_bgcolor := color.new(color.gray, 95)
+    
+    [trade_signal, confidence, base_score, signal_color, signal_bgcolor]
+
+[trade_signal, confidence, base_score, signal_color, signal_bgcolor] = get_trade_signal_with_style()
+
+// ============================================================================
+// SCALPING DETECTION - NOVÉ VÝPOČTY
+// ============================================================================
+
+// Scalping Detection
+get_scalping_signal() =>
+    // SCALPING CONDITIONS
+    high_volatility = atr_ratio > 1.5
+    quick_price_moves = math.abs(close - close[3]) > atr_val * 0.5
+    fast_momentum = momentum_strength > 1.5
+    high_volume_scalp = volume > volume_avg * 2.0
+    rsi_extreme = rsi_val < 30 or rsi_val > 70
+    
+    // SCALPING BUY CONDITIONS
+    scalp_buy_conditions = high_volatility and quick_price_moves and fast_momentum and high_volume_scalp and rsi_val < 30 and close > ema_fast_val and bullish_score > bearish_score
+    
+    // SCALPING SELL CONDITIONS
+    scalp_sell_conditions = high_volatility and quick_price_moves and fast_momentum and high_volume_scalp and rsi_val > 70 and close < ema_fast_val and bearish_score > bullish_score
+    
+    // SCALPING SCORE CALCULATION
+    scalp_score = 0
+    if high_volatility
+        scalp_score := scalp_score + 20
+    if quick_price_moves
+        scalp_score := scalp_score + 20
+    if fast_momentum
+        scalp_score := scalp_score + 20
+    if high_volume_scalp
+        scalp_score := scalp_score + 20
+    if rsi_extreme
+        scalp_score := scalp_score + 20
+    
+    // DETERMINE SCALPING SIGNAL
+    scalp_signal = ""
+    scalp_color = color.white
+    scalp_bgcolor = color.new(color.gray, 95)
+    scalp_confidence = ""
+    
+    if scalp_buy_conditions and scalp_score >= 60
+        scalp_signal := "SCALP BUY"
+        scalp_color := color.white
+        scalp_bgcolor := color.new(color.green, 50)
+        scalp_confidence := "HIGH"
+    else if scalp_sell_conditions and scalp_score >= 60
+        scalp_signal := "SCALP SELL"
+        scalp_color := color.white
+        scalp_bgcolor := color.new(color.red, 50)
+        scalp_confidence := "HIGH"
+    else if scalp_score >= 40
+        scalp_signal := "SCALP WAIT"
+        scalp_color := color.white
+        scalp_bgcolor := color.new(color.yellow, 70)
+        scalp_confidence := "MEDIUM"
+    else
+        scalp_signal := "NO SCALP"
+        scalp_color := color.white
+        scalp_bgcolor := color.new(color.gray, 95)
+        scalp_confidence := "LOW"
+    
+    [scalp_signal, scalp_confidence, scalp_score, scalp_color, scalp_bgcolor]
+
+[scalp_signal, scalp_confidence, scalp_score, scalp_color, scalp_bgcolor] = get_scalping_signal()
+
+// ============================================================================
+// TABULKA
+// ============================================================================
+
+if barstate.islast
+    var table info_table = table.new(position.top_right, 3, 12, bgcolor=color.new(color.black, 95), border_width=1, border_color=color.new(color.gray, 80))
+
+    // ATR
+    atr_signal = ""
+    atr_signal_color = color.red
+    atr_bgcolor = color.new(color.gray, 95)
+    
+    if atr_ratio >= 1.5
+        atr_signal := "HIGH VOL"
+        atr_signal_color := color.orange
+        atr_bgcolor := color.new(color.yellow, 90)
+    else if atr_ratio >= 1.2
+        atr_signal := "MED VOL"
+        atr_signal_color := color.yellow
+        atr_bgcolor := color.new(color.yellow, 90)
+    else if atr_ratio <= 0.8
+        atr_signal := "LOW VOL"
+        atr_signal_color := color.blue
+        atr_bgcolor := color.new(color.blue, 90)
+    else
+        atr_signal := "NORMAL"
+        atr_signal_color := color.white
+        atr_bgcolor := color.new(color.gray, 95)
+    
+    table.cell(info_table, 0, 0, "ATR", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 0, str.tostring(math.round(atr_val, 5)), text_color=color.white, bgcolor=atr_bgcolor)
+    table.cell(info_table, 2, 0, atr_signal, text_color=atr_signal_color, bgcolor=atr_bgcolor)
+
+    // Divergence
+    div_signal = ""
+    div_signal_color = color.red
+    div_bgcolor = color.new(color.gray, 95)
+    
+    if bull_div and bull_div_strength > div_threshold * 100
+        div_signal := "BUY"
+        div_signal_color := color.lime
+        div_bgcolor := color.new(color.purple, 90)
+    else if bear_div and bear_div_strength > div_threshold * 100
+        div_signal := "SELL"
+        div_signal_color := color.red
+        div_bgcolor := color.new(color.purple, 90)
+    else
+        div_signal := "NONE"
+        div_signal_color := color.white
+        div_bgcolor := color.new(color.gray, 95)
+    
+    div_text = bull_div ? "BULL DIV " + str.tostring(math.round(bull_div_strength)) + "%" : bear_div ? "BEAR DIV " + str.tostring(math.round(bear_div_strength)) + "%" : "−"
+    table.cell(info_table, 0, 1, "Divergence", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 1, div_text, text_color=div_signal_color, bgcolor=div_bgcolor)
+    table.cell(info_table, 2, 1, div_signal, text_color=div_signal_color, bgcolor=div_bgcolor)
+
+    // M30 Trend
+    table.cell(info_table, 0, 2, "M30 Trend", text_color=color.white, bgcolor=m30_color)
+    table.cell(info_table, 1, 2, m30_trend, text_color=m30_text_color, bgcolor=m30_color)
+    table.cell(info_table, 2, 2, m30_emoji, text_color=m30_text_color, bgcolor=m30_color)
+
+    // M15 Trend
+    table.cell(info_table, 0, 3, "M15 Trend", text_color=color.white, bgcolor=m15_color)
+    table.cell(info_table, 1, 3, m15_trend, text_color=m15_text_color, bgcolor=m15_color)
+    table.cell(info_table, 2, 3, m15_emoji, text_color=m15_text_color, bgcolor=m15_color)
+
+    // M5 Trend
+    table.cell(info_table, 0, 4, "M5 Trend", text_color=color.white, bgcolor=m5_color)
+    table.cell(info_table, 1, 4, m5_trend, text_color=m5_text_color, bgcolor=m5_color)
+    table.cell(info_table, 2, 4, m5_emoji, text_color=m5_text_color, bgcolor=m5_color)
+
+    // Current Trend
+    table.cell(info_table, 0, 5, "Current Trend", text_color=color.white, bgcolor=current_trend_color)
+    table.cell(info_table, 1, 5, current_trend, text_color=current_trend_text_color, bgcolor=current_trend_color)
+    table.cell(info_table, 2, 5, current_trend_emoji, text_color=current_trend_text_color, bgcolor=current_trend_color)
+
+    // Trend Strength
+    table.cell(info_table, 0, 6, "Trend Strength", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 6, strength_text, text_color=strength_color, bgcolor=strength_bgcolor)
+    table.cell(info_table, 2, 6, strength_emoji, text_color=strength_color, bgcolor=strength_bgcolor)
+
+    // S/R Distance
+    table.cell(info_table, 0, 7, "S/R Distance", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 7, str.tostring(math.round(distance_atr, 2)) + " ATR", text_color=sr_color, bgcolor=sr_bgcolor)
+    table.cell(info_table, 2, 7, sr_status, text_color=sr_color, bgcolor=sr_bgcolor)
+
+    // Stop Loss
+    table.cell(info_table, 0, 8, "Stop Loss", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 8, str.tostring(math.round(sl_value, 5)), text_color=color.white, bgcolor=color.new(color.red, 70))
+    table.cell(info_table, 2, 8, "2.0:1", text_color=color.white, bgcolor=color.new(color.red, 70))
+
+    // Take Profit 1
+    table.cell(info_table, 0, 9, "TP1", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 9, str.tostring(math.round(tp1_value, 5)), text_color=color.white, bgcolor=color.new(color.green, 70))
+    table.cell(info_table, 2, 9, "1.5:1", text_color=color.white, bgcolor=color.new(color.green, 70))
+
+    // Scalping Signal
+    table.cell(info_table, 0, 10, "Scalping", text_color=color.white, bgcolor=scalp_bgcolor)
+    table.cell(info_table, 1, 10, scalp_signal, text_color=scalp_color, bgcolor=scalp_bgcolor)
+    table.cell(info_table, 2, 10, scalp_confidence, text_color=scalp_color, bgcolor=scalp_bgcolor)
+
+    // Summary (moved to last position)
+    table.cell(info_table, 0, 11, "Summary", text_color=color.white, bgcolor=color.new(color.blue, 90))
+    table.cell(info_table, 1, 11, str.tostring(buy_signals) + "B/" + str.tostring(sell_signals) + "S", text_color=color.white, bgcolor=summary_bgcolor)
+    table.cell(info_table, 2, 11, summary_signal, text_color=summary_color, bgcolor=summary_bgcolor) 
